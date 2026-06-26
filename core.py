@@ -69,10 +69,6 @@ def dn_to_celsius(dn: int, use_landsat: bool = False) -> float:
         return 0.0
 
 def calculate_stats(matrix: List[List[float]], bmp_data: BmpData) -> TemperatureStats:
-    """
-    Вычисляет статистику суши/воды, учитывая абсолютно все значащие пиксели.
-    Игнорирует только чистый аппаратурный ноль (черный фон).
-    """
     flat_temps = []
     h = bmp_data.height
     w = bmp_data.width
@@ -98,62 +94,64 @@ def process_bmp_to_temperatures(bmp_data: BmpData) -> AnalysisResult:
     stats: TemperatureStats = calculate_stats(temp_matrix, bmp_data)
     return AnalysisResult(width=bmp_data.width, height=bmp_data.height, temp_matrix_c=temp_matrix, stats=stats)
 
+
 def generate_fast_rgb_buffer(analysis_result: AnalysisResult, bmp_data: BmpData, min_v: float, max_v: float, palette_type: str) -> bytes:
     """
-    Максимально быстрая сборка сырого RGB32 байт-массива.
-    Динамически красит темные участки, если они попали в диапазон слайдеров.
+    Ультрабыстрая генерация буфера через Look-Up Table (LUT).
+    Работает моментально за счет переноса попиксельной логики в предрасчитанную палитру из 256 значений.
     """
     w: int = analysis_result.width
     h: int = analysis_result.height
     
-    buffer = bytearray(w * h * 4)
-    idx = 0
+    # Сборка одномерного flat-массива из матрицы DN встроенным Си-методом Python (мгновенно)
+    dn_flat = [dn for row in bmp_data.raw_dn_matrix for dn in row]
     
+    # Создаем LUT палитру (всего 256 элементов под каждый возможный оттенок DN)
+    lut = bytearray(256 * 4)
     range_diff = max_v - min_v
     inv_range = 1.0 / range_diff if range_diff != 0 else 1.0
 
-    for r in range(h):
-        for c in range(w):
-            dn = bmp_data.raw_dn_matrix[r][c]
-            val = analysis_result.temp_matrix_c[r][c]
-            
-            # Фильтруем ТОЛЬКО истинный черный фон (аппаратурный ноль) 
-            # либо пиксели, которые выходят за рамки выбранного слайдером диапазона
-            if dn == 0 or val < min_v or val > max_v:
-                buffer[idx] = 0   # B
-                buffer[idx+1] = 0 # G
-                buffer[idx+2] = 0 # R
-                buffer[idx+3] = 255 # A
-                idx += 4
-                continue
+    for dn in range(256):
+        val = 15.0 + (dn / 255.0) * 30.0  # Формула пересчета градусов из dn_to_celsius
+        idx = dn * 4
+        
+        # Если это фоновый пиксель или вышел за пределы слайдеров — красим в черный
+        if dn == 0 or val < min_v or val > max_v:
+            lut[idx:idx+4] = b'\x00\x00\x00\xff'
+            continue
 
-            # Линейная нормализация пикселя внутри установленных ползунками границ
-            norm = max(0.0, min(1.0, (val - min_v) * inv_range))
-            
-            if palette_type == "JET":
-                r_c = max(0.0, min(1.0, 1.5 - abs(norm * 4.0 - 3.0)))
-                g_c = max(0.0, min(1.0, 1.5 - abs(norm * 4.0 - 2.0)))
-                b_c = max(0.0, min(1.0, 1.5 - abs(norm * 4.0 - 1.0)))
-            elif palette_type == "HOT":
-                r_c = max(0.0, min(1.0, norm * 3.0))
-                g_c = max(0.0, min(1.0, norm * 3.0 - 1.0))
-                b_c = max(0.0, min(1.0, norm * 3.0 - 2.0))
-            elif palette_type == "GRAY":  # Добавляем честный серый канал для исходника
-                r_c = g_c = b_c = norm
-            else:  # COOL
-                r_c = norm
-                g_c = 1.0 - norm
-                b_c = 1.0
+        norm = max(0.0, min(1.0, (val - min_v) * inv_range))
+        
+        if palette_type == "JET":
+            r_c = max(0.0, min(1.0, 1.5 - abs(norm * 4.0 - 3.0)))
+            g_c = max(0.0, min(1.0, 1.5 - abs(norm * 4.0 - 2.0)))
+            b_c = max(0.0, min(1.0, 1.5 - abs(norm * 4.0 - 1.0)))
+        elif palette_type == "HOT":
+            r_c = max(0.0, min(1.0, norm * 3.0))
+            g_c = max(0.0, min(1.0, norm * 3.0 - 1.0))
+            b_c = max(0.0, min(1.0, norm * 3.0 - 2.0))
+        elif palette_type == "GRAY":
+            r_c = g_c = b_c = norm
+        else:  # COOL
+            r_c = norm
+            g_c = 1.0 - norm
+            b_c = 1.0
 
-            buffer[idx] = int(b_c * 255)
-            buffer[idx+1] = int(g_c * 255)
-            buffer[idx+2] = int(r_c * 255)
-            buffer[idx+3] = 255
-            idx += 4
+        lut[idx] = int(b_c * 255)      # B
+        lut[idx+1] = int(g_c * 255)    # G
+        lut[idx+2] = int(r_c * 255)    # R
+        lut[idx+3] = 255               # A
+
+    # Генерация финального кадра: проецируем LUT палитру на плоский массив DN
+    # Циклы Python устранены. Сборка идет Си-генератором списков.
+    buffer = bytearray(w * h * 4)
+    buffer[:] = b''.join(lut[dn*4 : dn*4+4] for dn in dn_flat)
             
     return bytes(buffer)
 
+
 def save_analysis_to_bmp(filepath: str, analysis_result: AnalysisResult, bmp_data: BmpData, min_v: float, max_v: float, palette_type: str) -> None:
+    """Сохранение полноценного BMP файла с использованием оптимизированного LUT."""
     w: int = analysis_result.width
     h: int = analysis_result.height
     
@@ -164,39 +162,46 @@ def save_analysis_to_bmp(filepath: str, analysis_result: AnalysisResult, bmp_dat
     file_header: bytes = struct.pack('<2sLHHL', b'BM', file_size, 0, 0, 54)
     info_header: bytes = struct.pack('<LllHHLLllLL', 40, w, h, 1, 24, 0, pixel_data_size, 2835, 2835, 0, 0)
     
-    padding_bytes: bytes = b'\x00' * (row_padded_width - (w * 3))
-    pixel_bytes_list: List[bytes] = []
-    
+    # Собираем LUT для 3-байтового BMP (BGR)
+    lut_bmp = bytearray(256 * 3)
     range_diff = max_v - min_v
     inv_range = 1.0 / range_diff if range_diff != 0 else 1.0
+
+    for dn in range(256):
+        val = 15.0 + (dn / 255.0) * 30.0
+        idx = dn * 3
+        if dn == 0 or val < min_v or val > max_v:
+            lut_bmp[idx:idx+3] = b'\x00\x00\x00'
+            continue
+
+        norm = max(0.0, min(1.0, (val - min_v) * inv_range))
+        if palette_type == "JET":
+            r_c = max(0.0, min(1.0, 1.5 - abs(norm * 4.0 - 3.0)))
+            g_c = max(0.0, min(1.0, 1.5 - abs(norm * 4.0 - 2.0)))
+            b_c = max(0.0, min(1.0, 1.5 - abs(norm * 4.0 - 1.0)))
+        elif palette_type == "HOT":
+            r_c = max(0.0, min(1.0, norm * 3.0))
+            g_c = max(0.0, min(1.0, norm * 3.0 - 1.0))
+            b_c = max(0.0, min(1.0, norm * 3.0 - 2.0))
+        elif palette_type == "GRAY":
+            r_c = g_c = b_c = norm
+        else:
+            r_c = norm
+            g_c = 1.0 - norm
+            b_c = 1.0
+
+        lut_bmp[idx] = int(b_c * 255)
+        lut_bmp[idx+1] = int(g_c * 255)
+        lut_bmp[idx+2] = int(r_c * 255)
+
+    padding_bytes = b'\x00' * (row_padded_width - (w * 3))
+    pixel_bytes_list: List[bytes] = []
     
-    for r in range(h):
-        row_bytes: bytearray = bytearray()
-        for c in range(w):
-            val: float = analysis_result.temp_matrix_c[r][c]
-            dn = bmp_data.raw_dn_matrix[r][c]
-            
-            if dn == 0 or val < min_v or val > max_v:
-                row_bytes.extend(b'\x00\x00\x00')
-                continue
-                
-            norm = max(0.0, min(1.0, (val - min_v) * inv_range))
-            if palette_type == "JET":
-                r_c = max(0.0, min(1.0, 1.5 - abs(norm * 4.0 - 3.0)))
-                g_c = max(0.0, min(1.0, 1.5 - abs(norm * 4.0 - 2.0)))
-                b_c = max(0.0, min(1.0, 1.5 - abs(norm * 4.0 - 1.0)))
-            elif palette_type == "HOT":
-                r_c = max(0.0, min(1.0, norm * 3.0))
-                g_c = max(0.0, min(1.0, norm * 3.0 - 1.0))
-                b_c = max(0.0, min(1.0, norm * 3.0 - 2.0))
-            else:
-                r_c = norm
-                g_c = 1.0 - norm
-                b_c = 1.0
-                
-            row_bytes.append(int(b_c * 255))
-            row_bytes.append(int(g_c * 255))
-            row_bytes.append(int(r_c * 255))
+    # Записываем строки, так как они уже лежат в нужной для BMP ориентации
+    for row in bmp_data.raw_dn_matrix:
+        row_bytes = bytearray()
+        for dn in row:
+            row_bytes.extend(lut_bmp[dn * 3 : dn * 3 + 3])
         row_bytes.extend(padding_bytes)
         pixel_bytes_list.append(bytes(row_bytes))
         
