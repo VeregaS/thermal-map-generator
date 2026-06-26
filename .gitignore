@@ -1,0 +1,16 @@
+# Виртуальное окружение
+venv/
+.venv/
+env/
+
+# Кэш Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Локальные файлы данных и отчеты
+*.bmp
+*.txt
+
+.vscode/
