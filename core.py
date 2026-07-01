@@ -1,5 +1,6 @@
 import struct
 import math
+import logging
 from typing import List
 from model import BmpData, TemperatureStats, AnalysisResult, RgbColor
 
@@ -17,7 +18,19 @@ def load_bmp_data(filepath: str) -> BmpData:
         info_header = f.read(40)
         if len(info_header) < 40:
             raise ValueError("Некорректный заголовок InfoHeader")
-            
+        
+        # < : Little-endian (младший байт идет первым)
+        # L : DWORD (4 байта) - размер структуры InfoHeader (biSize)
+        # l : LONG (4 байта) - ширина изображения (biWidth)
+        # l : LONG (4 байта) - высота изображения (biHeight)
+        # H : WORD (2 байта) - количество плоскостей (biPlanes)
+        # H : WORD (2 байта) - бит на пиксель, глубина цвета (biBitCount)
+        # L : DWORD (4 байта) - тип сжатия (biCompression)
+        # L : DWORD (4 байта) - размер изображения в байтах (biSizeImage)
+        # l : LONG (4 байта) - горизонтальное разрешение (biXPelsPerMeter)
+        # l : LONG (4 байта) - вертикальное разрешение (biYPelsPerMeter)
+        # L : DWORD (4 байта) - количество используемых цветов (biClrUsed)
+        # L : DWORD (4 байта) - количество важных цветов (biClrImportant)
         _, width, height, _, bits_per_pixel, compression, _, _, _, _, _ = struct.unpack(
             '<LllHHLLllLL', info_header
         )
@@ -25,37 +38,37 @@ def load_bmp_data(filepath: str) -> BmpData:
         if compression != 0:
             raise ValueError("Сжатые файлы BMP не поддерживаются")
 
+        if bits_per_pixel != 8:
+            raise ValueError("Поддерживаются только 8-битные BMP-файлы")
+
         data_offset = struct.unpack('<L', file_header[10:14])[0]
         f.seek(data_offset)
         
         matrix: List[List[int]] = []
         
-        if bits_per_pixel == 8:
-            row_padded_width = (width + 3) & ~3
-            for _ in range(height):
-                row_bytes = f.read(row_padded_width)
-                matrix.append([int(b) for b in row_bytes[:width]])
-                
-        elif bits_per_pixel == 24:
-            row_padded_width = (width * 3 + 3) & ~3
-            padding_size = row_padded_width - (width * 3)
-            for _ in range(height):
-                row_dn = []
-                for _ in range(width):
-                    bgr = f.read(3)
-                    if len(bgr) < 3:
-                        break
-                    b, g, r = bgr[0], bgr[1], bgr[2]
-                    dn = int(0.299 * r + 0.587 * g + 0.114 * b)
-                    row_dn.append(dn)
-                f.read(padding_size)
-                matrix.append(row_dn)
-        else:
-            raise ValueError(f"Формат {bits_per_pixel} бит не поддерживается.")
-        
+        row_padded_width = (width + 3) & ~3
+        for _ in range(height):
+            row_bytes = f.read(row_padded_width)
+            matrix.append([int(b) for b in row_bytes[:width]])
+            
     return BmpData(width=width, height=height, raw_dn_matrix=matrix)
 
-def dn_to_celsius(dn: int, use_landsat: bool = False) -> float:
+
+def dn_to_celsius(dn: int, use_landsat: bool = True) -> float:
+    """
+    Переводит цифровое значение яркости (DN) пикселя в температуру в градусах Цельсия.
+
+    Аргументы:
+        dn (int): Значение яркости пикселя (Digital Number, 0-255).
+        use_landsat (bool): Флаг использования тепловых констант Landsat 8 (TIRS).
+
+    Возвращает:
+        float: Температура в градусах Цельсия или float('nan') в случае математической ошибки.
+        
+    Формула:
+        L = M * dn + A (спектральная энергетическая яркость)
+        T = K2 / ln(K1 / L + 1) - 273.15 (перевод в градусы Цельсия)
+    """
     if not use_landsat:
         return 15.0 + (dn / 255.0) * 30.0
         
@@ -64,19 +77,28 @@ def dn_to_celsius(dn: int, use_landsat: bool = False) -> float:
     try:
         t_kelvin: float = DEFAULT_K2 / math.log((DEFAULT_K1 / safe_l) + 1.0)
         celsius = t_kelvin - 273.15
-        return celsius if celsius >= -10.0 else 0.0
+        return celsius if celsius >= -10.0 else float('nan')
     except (ValueError, ZeroDivisionError):
-        return 0.0
+        return float('nan')
+
 
 def calculate_stats(matrix: List[List[float]], bmp_data: BmpData) -> TemperatureStats:
     flat_temps = []
     h = bmp_data.height
     w = bmp_data.width
+    error_count = 0
     for r in range(h):
         for c in range(w):
             if bmp_data.raw_dn_matrix[r][c] > 0:
-                flat_temps.append(matrix[r][c])
-                
+                t = matrix[r][c]
+                if math.isnan(t):
+                    error_count += 1
+                else:
+                    flat_temps.append(t)
+                    
+    if error_count > 0:
+        logging.warning(f"Найдено некорректных пикселей (NaN): {error_count}. Они исключены из статистики.")
+            
     if not flat_temps:
         return TemperatureStats(0.0, 0.0, 0.0)
     
@@ -88,7 +110,7 @@ def calculate_stats(matrix: List[List[float]], bmp_data: BmpData) -> Temperature
 
 def process_bmp_to_temperatures(bmp_data: BmpData) -> AnalysisResult:
     temp_matrix: List[List[float]] = [
-        [dn_to_celsius(dn, use_landsat=False) for dn in row]
+        [dn_to_celsius(dn, use_landsat=True) for dn in row]
         for row in bmp_data.raw_dn_matrix
     ]
     stats: TemperatureStats = calculate_stats(temp_matrix, bmp_data)
@@ -98,7 +120,16 @@ def process_bmp_to_temperatures(bmp_data: BmpData) -> AnalysisResult:
 def generate_fast_rgb_buffer(analysis_result: AnalysisResult, bmp_data: BmpData, min_v: float, max_v: float, palette_type: str) -> bytes:
     """
     Быстрая генерация буфера через Look-Up Table (LUT).
-    Работает моментально за счет переноса попиксельной логики в предрасчитанную палитру из 256 значений.
+
+    Аргументы:
+        analysis_result (AnalysisResult): Результат температурного анализа матрицы.
+        bmp_data (BmpData): Исходные данные BMP-файла.
+        min_v (float): Минимальная граница температур для отображения.
+        max_v (float): Максимальная граница температур для отображения.
+        palette_type (str): Выбранный тип палитры (JET, HOT, GRAY, COOL).
+
+    Возвращает:
+        bytes: Массив байтов в формате RGB32 для быстрой отрисовки в GUI.
     """
     w: int = analysis_result.width
     h: int = analysis_result.height
@@ -110,7 +141,7 @@ def generate_fast_rgb_buffer(analysis_result: AnalysisResult, bmp_data: BmpData,
     inv_range = 1.0 / range_diff if range_diff != 0 else 1.0
 
     for dn in range(256):
-        val = 15.0 + (dn / 255.0) * 30.0 
+        val = dn_to_celsius(dn, use_landsat=True)
         idx = dn * 4
         
         if dn == 0 or val < min_v or val > max_v:
@@ -146,7 +177,20 @@ def generate_fast_rgb_buffer(analysis_result: AnalysisResult, bmp_data: BmpData,
 
 
 def save_analysis_to_bmp(filepath: str, analysis_result: AnalysisResult, bmp_data: BmpData, min_v: float, max_v: float, palette_type: str) -> None:
-    """Сохранение полноценного BMP файла с использованием оптимизированного LUT."""
+    """
+    Сохраняет сгенерированную тепловую карту в виде 24-битного BMP-файла на диск.
+
+    Аргументы:
+        filepath (str): Полный путь для сохранения файла.
+        analysis_result (AnalysisResult): Данные температурного расчета.
+        bmp_data (BmpData): Исходная матрица.
+        min_v (float): Минимальная граница градиента.
+        max_v (float): Максимальная граница градиента.
+        palette_type (str): Выбранный тип палитры.
+
+    Возвращает:
+        None
+    """
     w: int = analysis_result.width
     h: int = analysis_result.height
     
@@ -162,7 +206,7 @@ def save_analysis_to_bmp(filepath: str, analysis_result: AnalysisResult, bmp_dat
     inv_range = 1.0 / range_diff if range_diff != 0 else 1.0
 
     for dn in range(256):
-        val = 15.0 + (dn / 255.0) * 30.0
+        val = dn_to_celsius(dn, use_landsat=True)
         idx = dn * 3
         if dn == 0 or val < min_v or val > max_v:
             lut_bmp[idx:idx+3] = b'\x00\x00\x00'
