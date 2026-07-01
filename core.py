@@ -2,7 +2,7 @@ import struct
 import math
 import logging
 from typing import List
-from model import BmpData, TemperatureStats, AnalysisResult, RgbColor
+from model import BmpData, TemperatureStats, AnalysisResult
 
 DEFAULT_M = 0.0003342
 DEFAULT_A = 0.1
@@ -58,7 +58,7 @@ def load_bmp_data(filepath: str) -> BmpData:
     return BmpData(width=width, height=height, raw_dn_matrix=matrix)
 
 
-def dn_to_celsius(dn: int, use_landsat: bool = True) -> float:
+def dn_to_celsius(dn: int) -> float:
     """
     Переводит цифровое значение яркости (DN) пикселя в температуру в градусах Цельсия.
 
@@ -73,9 +73,6 @@ def dn_to_celsius(dn: int, use_landsat: bool = True) -> float:
         L = M * dn + A (спектральная энергетическая яркость)
         T = K2 / ln(K1 / L + 1) - 273.15 (перевод в градусы Цельсия)
     """
-    if not use_landsat:
-        return 15.0 + (dn / 255.0) * 30.0
-        
     l_val: float = DEFAULT_M * dn + DEFAULT_A
     safe_l: float = l_val if l_val > 0 else 0.0001
     try:
@@ -84,6 +81,25 @@ def dn_to_celsius(dn: int, use_landsat: bool = True) -> float:
         return celsius if celsius >= -10.0 else float('nan')
     except (ValueError, ZeroDivisionError):
         return float('nan')
+    
+    
+def _get_color_from_palette(norm: float, palette_type: str) -> tuple[int, int, int]:
+    """Возвращает RGB-компоненты (R, G, B) от 0 до 255 на основе нормализованного значения."""
+    if palette_type == "JET":
+        r_c = max(0.0, min(1.0, 1.5 - abs(norm * 4.0 - 3.0)))
+        g_c = max(0.0, min(1.0, 1.5 - abs(norm * 4.0 - 2.0)))
+        b_c = max(0.0, min(1.0, 1.5 - abs(norm * 4.0 - 1.0)))
+    elif palette_type == "HOT":
+        r_c = max(0.0, min(1.0, norm * 3.0))
+        g_c = max(0.0, min(1.0, norm * 3.0 - 1.0))
+        b_c = max(0.0, min(1.0, norm * 3.0 - 2.0))
+    elif palette_type == "GRAY":
+        r_c = g_c = b_c = norm
+    else:  # COOL
+        r_c = norm
+        g_c = 1.0 - norm
+        b_c = 1.0
+    return int(r_c * 255), int(g_c * 255), int(b_c * 255)
 
 
 def calculate_stats(matrix: List[List[float]], bmp_data: BmpData) -> TemperatureStats:
@@ -114,7 +130,7 @@ def calculate_stats(matrix: List[List[float]], bmp_data: BmpData) -> Temperature
 
 def process_bmp_to_temperatures(bmp_data: BmpData) -> AnalysisResult:
     temp_matrix: List[List[float]] = [
-        [dn_to_celsius(dn, use_landsat=True) for dn in row]
+        [dn_to_celsius(dn) for dn in row]
         for row in bmp_data.raw_dn_matrix
     ]
     stats: TemperatureStats = calculate_stats(temp_matrix, bmp_data)
@@ -137,7 +153,6 @@ def generate_fast_rgb_buffer(analysis_result: AnalysisResult, bmp_data: BmpData,
     """
     w: int = analysis_result.width
     h: int = analysis_result.height
-    
     dn_flat = [dn for row in bmp_data.raw_dn_matrix for dn in row]
     
     lut = bytearray(256 * 4)
@@ -145,7 +160,7 @@ def generate_fast_rgb_buffer(analysis_result: AnalysisResult, bmp_data: BmpData,
     inv_range = 1.0 / range_diff if range_diff != 0 else 1.0
 
     for dn in range(256):
-        val = dn_to_celsius(dn, use_landsat=True)
+        val = dn_to_celsius(dn) 
         idx = dn * 4
         
         if dn == 0 or math.isnan(val) or val < min_v or val > max_v:
@@ -153,30 +168,15 @@ def generate_fast_rgb_buffer(analysis_result: AnalysisResult, bmp_data: BmpData,
             continue
 
         norm = max(0.0, min(1.0, (val - min_v) * inv_range))
+        r, g, b = _get_color_from_palette(norm, palette_type)
         
-        if palette_type == "JET":
-            r_c = max(0.0, min(1.0, 1.5 - abs(norm * 4.0 - 3.0)))
-            g_c = max(0.0, min(1.0, 1.5 - abs(norm * 4.0 - 2.0)))
-            b_c = max(0.0, min(1.0, 1.5 - abs(norm * 4.0 - 1.0)))
-        elif palette_type == "HOT":
-            r_c = max(0.0, min(1.0, norm * 3.0))
-            g_c = max(0.0, min(1.0, norm * 3.0 - 1.0))
-            b_c = max(0.0, min(1.0, norm * 3.0 - 2.0))
-        elif palette_type == "GRAY":
-            r_c = g_c = b_c = norm
-        else:  # COOL
-            r_c = norm
-            g_c = 1.0 - norm
-            b_c = 1.0
-
-        lut[idx] = int(b_c * 255)      # B
-        lut[idx+1] = int(g_c * 255)    # G
-        lut[idx+2] = int(r_c * 255)    # R
-        lut[idx+3] = 255               # A
+        lut[idx] = b          # B
+        lut[idx+1] = g        # G
+        lut[idx+2] = r        # R
+        lut[idx+3] = 255      # A
 
     buffer = bytearray(w * h * 4)
     buffer[:] = b''.join(lut[dn*4 : dn*4+4] for dn in dn_flat)
-            
     return bytes(buffer)
 
 
@@ -197,7 +197,6 @@ def save_analysis_to_bmp(filepath: str, analysis_result: AnalysisResult, bmp_dat
     """
     w: int = analysis_result.width
     h: int = analysis_result.height
-    
     row_padded_width: int = (w * 3 + 3) & ~3
     pixel_data_size: int = row_padded_width * h
     file_size: int = 14 + 40 + pixel_data_size
@@ -210,32 +209,18 @@ def save_analysis_to_bmp(filepath: str, analysis_result: AnalysisResult, bmp_dat
     inv_range = 1.0 / range_diff if range_diff != 0 else 1.0
 
     for dn in range(256):
-        val = dn_to_celsius(dn, use_landsat=True)
+        val = dn_to_celsius(dn)
         idx = dn * 3
-        
         if dn == 0 or math.isnan(val) or val < min_v or val > max_v:
             lut_bmp[idx:idx+3] = b'\x00\x00\x00'
             continue
 
         norm = max(0.0, min(1.0, (val - min_v) * inv_range))
-        if palette_type == "JET":
-            r_c = max(0.0, min(1.0, 1.5 - abs(norm * 4.0 - 3.0)))
-            g_c = max(0.0, min(1.0, 1.5 - abs(norm * 4.0 - 2.0)))
-            b_c = max(0.0, min(1.0, 1.5 - abs(norm * 4.0 - 1.0)))
-        elif palette_type == "HOT":
-            r_c = max(0.0, min(1.0, norm * 3.0))
-            g_c = max(0.0, min(1.0, norm * 3.0 - 1.0))
-            b_c = max(0.0, min(1.0, norm * 3.0 - 2.0))
-        elif palette_type == "GRAY":
-            r_c = g_c = b_c = norm
-        else:
-            r_c = norm
-            g_c = 1.0 - norm
-            b_c = 1.0
+        r, g, b = _get_color_from_palette(norm, palette_type)
 
-        lut_bmp[idx] = int(b_c * 255)
-        lut_bmp[idx+1] = int(g_c * 255)
-        lut_bmp[idx+2] = int(r_c * 255)
+        lut_bmp[idx] = b
+        lut_bmp[idx+1] = g
+        lut_bmp[idx+2] = r
 
     padding_bytes = b'\x00' * (row_padded_width - (w * 3))
     pixel_bytes_list: List[bytes] = []

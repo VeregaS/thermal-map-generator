@@ -1,12 +1,11 @@
 from typing import Any, cast
-from PyQt6.QtWidgets import QFileDialog
+from PyQt6.QtWidgets import QFileDialog, QMessageBox
 from PyQt6.QtGui import QImage, QPixmap, QMouseEvent
 import model
 import core
 import ui
 
 class SSTController:
-    """Контроллер приложения. Связывает логику расчетов и интерфейс."""
     def __init__(self, view: ui.SSTView) -> None:
         self.view = view
         self.bmp_data: model.BmpData | None = None
@@ -14,22 +13,35 @@ class SSTController:
         self._bind_signals()
 
     def _bind_signals(self) -> None:
-        """Привязка событий GUI к бизнес-логике контроллера."""
         cast(Any, self.view.btn_load.clicked).connect(self._on_load_file)
         cast(Any, self.view.cmb_palette.currentTextChanged).connect(self.update_views)
         
         cast(Any, self.view.sld_min.sliderReleased).connect(self.update_views)
         cast(Any, self.view.sld_max.sliderReleased).connect(self.update_views)
         
-        cast(Any, self.view.sld_min.valueChanged).connect(self._on_slider_moving)
-        cast(Any, self.view.sld_max.valueChanged).connect(self._on_slider_moving)
+        cast(Any, self.view.sld_min.valueChanged).connect(self._on_min_slider_moving)
+        cast(Any, self.view.sld_max.valueChanged).connect(self._on_max_slider_moving)
         
         cast(Any, self.view.btn_export_txt.clicked).connect(self._on_export_txt)
         cast(Any, self.view.btn_export_bmp.clicked).connect(self._on_export_bmp)
         
         self.view.lbl_canvas_map.hover_callback = self._on_mouse_hover
 
-    def _on_slider_moving(self) -> None:
+    def _on_min_slider_moving(self) -> None:
+        if self.view.sld_min.value() > self.view.sld_max.value():
+            self.view.sld_max.blockSignals(True)
+            self.view.sld_max.setValue(self.view.sld_min.value())
+            self.view.sld_max.blockSignals(False)
+        self._update_slider_labels()
+
+    def _on_max_slider_moving(self) -> None:
+        if self.view.sld_max.value() < self.view.sld_min.value():
+            self.view.sld_min.blockSignals(True)
+            self.view.sld_min.setValue(self.view.sld_max.value())
+            self.view.sld_min.blockSignals(False)
+        self._update_slider_labels()
+
+    def _update_slider_labels(self) -> None:
         min_t = float(self.view.sld_min.value()) / 10.0
         max_t = float(self.view.sld_max.value()) / 10.0
         self.view.update_slider_text(min_t, max_t)
@@ -66,7 +78,7 @@ class SSTController:
 
             self.update_views()
         except Exception as e:
-            self.view.lbl_pointer.setText(f"Ошибка чтения:\n{str(e)}")
+            QMessageBox.critical(self.view, "Ошибка загрузки", f"Не удалось прочитать файл:\n{str(e)}")
 
     def update_views(self) -> None:
         if not self.bmp_data or not self.analysis_result: return

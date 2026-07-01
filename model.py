@@ -18,9 +18,3 @@ class AnalysisResult(NamedTuple):
     height: int
     temp_matrix_c: List[List[float]]
     stats: TemperatureStats
-
-class RgbColor(NamedTuple):
-    """Структура представления цвета в формате RGB."""
-    r: int
-    g: int
-    b: int
