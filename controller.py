@@ -27,7 +27,6 @@ class SSTController:
         cast(Any, self.view.btn_export_txt.clicked).connect(self._on_export_txt)
         cast(Any, self.view.btn_export_bmp.clicked).connect(self._on_export_bmp)
         
-        # Переназначаем колбэк пипетки во View
         self.view.lbl_canvas_map.hover_callback = self._on_mouse_hover
 
     def _on_slider_moving(self) -> None:

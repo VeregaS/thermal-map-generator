@@ -97,25 +97,22 @@ def process_bmp_to_temperatures(bmp_data: BmpData) -> AnalysisResult:
 
 def generate_fast_rgb_buffer(analysis_result: AnalysisResult, bmp_data: BmpData, min_v: float, max_v: float, palette_type: str) -> bytes:
     """
-    Ультрабыстрая генерация буфера через Look-Up Table (LUT).
+    Быстрая генерация буфера через Look-Up Table (LUT).
     Работает моментально за счет переноса попиксельной логики в предрасчитанную палитру из 256 значений.
     """
     w: int = analysis_result.width
     h: int = analysis_result.height
     
-    # Сборка одномерного flat-массива из матрицы DN встроенным Си-методом Python (мгновенно)
     dn_flat = [dn for row in bmp_data.raw_dn_matrix for dn in row]
     
-    # Создаем LUT палитру (всего 256 элементов под каждый возможный оттенок DN)
     lut = bytearray(256 * 4)
     range_diff = max_v - min_v
     inv_range = 1.0 / range_diff if range_diff != 0 else 1.0
 
     for dn in range(256):
-        val = 15.0 + (dn / 255.0) * 30.0  # Формула пересчета градусов из dn_to_celsius
+        val = 15.0 + (dn / 255.0) * 30.0 
         idx = dn * 4
         
-        # Если это фоновый пиксель или вышел за пределы слайдеров — красим в черный
         if dn == 0 or val < min_v or val > max_v:
             lut[idx:idx+4] = b'\x00\x00\x00\xff'
             continue
@@ -142,8 +139,6 @@ def generate_fast_rgb_buffer(analysis_result: AnalysisResult, bmp_data: BmpData,
         lut[idx+2] = int(r_c * 255)    # R
         lut[idx+3] = 255               # A
 
-    # Генерация финального кадра: проецируем LUT палитру на плоский массив DN
-    # Циклы Python устранены. Сборка идет Си-генератором списков.
     buffer = bytearray(w * h * 4)
     buffer[:] = b''.join(lut[dn*4 : dn*4+4] for dn in dn_flat)
             
@@ -162,7 +157,6 @@ def save_analysis_to_bmp(filepath: str, analysis_result: AnalysisResult, bmp_dat
     file_header: bytes = struct.pack('<2sLHHL', b'BM', file_size, 0, 0, 54)
     info_header: bytes = struct.pack('<LllHHLLllLL', 40, w, h, 1, 24, 0, pixel_data_size, 2835, 2835, 0, 0)
     
-    # Собираем LUT для 3-байтового BMP (BGR)
     lut_bmp = bytearray(256 * 3)
     range_diff = max_v - min_v
     inv_range = 1.0 / range_diff if range_diff != 0 else 1.0
@@ -197,7 +191,6 @@ def save_analysis_to_bmp(filepath: str, analysis_result: AnalysisResult, bmp_dat
     padding_bytes = b'\x00' * (row_padded_width - (w * 3))
     pixel_bytes_list: List[bytes] = []
     
-    # Записываем строки, так как они уже лежат в нужной для BMP ориентации
     for row in bmp_data.raw_dn_matrix:
         row_bytes = bytearray()
         for dn in row:

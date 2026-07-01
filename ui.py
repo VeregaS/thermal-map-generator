@@ -195,7 +195,7 @@ class SSTView(QMainWindow):
         self.scroll_src = ZoomableScrollArea(self.lbl_canvas_src)
         self.notebook.addTab(self.scroll_src, "Исходный снимок")
 
-        self.lbl_canvas_map = HoverLabel(lambda ev: None) # Назначается из контроллера
+        self.lbl_canvas_map = HoverLabel(lambda ev: None)
         self.lbl_canvas_map.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.lbl_canvas_map.setStyleSheet("background-color: #0B0C10;")
         self.lbl_canvas_map.setMouseTracking(True)
