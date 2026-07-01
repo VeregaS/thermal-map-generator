@@ -46,6 +46,10 @@ def load_bmp_data(filepath: str) -> BmpData:
         
         matrix: List[List[int]] = []
         
+        # Выравнивание длины строки кратно 4 байтам (строгое требование стандарта BMP).
+        # Операция (width + 3) прибавляет 3 для компенсации неполных четверок байт.
+        # Побитовое И с инверсией тройки (& ~3) сбрасывает два младших бита в ноль, 
+        # тем самым округляя итоговое значение в большую сторону до ближайшего числа, кратного 4.
         row_padded_width = (width + 3) & ~3
         for _ in range(height):
             row_bytes = f.read(row_padded_width)
@@ -144,7 +148,7 @@ def generate_fast_rgb_buffer(analysis_result: AnalysisResult, bmp_data: BmpData,
         val = dn_to_celsius(dn, use_landsat=True)
         idx = dn * 4
         
-        if dn == 0 or val < min_v or val > max_v:
+        if dn == 0 or math.isnan(val) or val < min_v or val > max_v:
             lut[idx:idx+4] = b'\x00\x00\x00\xff'
             continue
 
@@ -208,7 +212,8 @@ def save_analysis_to_bmp(filepath: str, analysis_result: AnalysisResult, bmp_dat
     for dn in range(256):
         val = dn_to_celsius(dn, use_landsat=True)
         idx = dn * 3
-        if dn == 0 or val < min_v or val > max_v:
+        
+        if dn == 0 or math.isnan(val) or val < min_v or val > max_v:
             lut_bmp[idx:idx+3] = b'\x00\x00\x00'
             continue
 
