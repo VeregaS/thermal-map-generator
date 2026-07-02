@@ -4,6 +4,7 @@ from PyQt6.QtGui import QImage, QPixmap, QMouseEvent
 import model
 import core
 import ui
+import tif_importer
 
 class SSTController:
     def __init__(self, view: ui.SSTView) -> None:
@@ -14,6 +15,7 @@ class SSTController:
 
     def _bind_signals(self) -> None:
         cast(Any, self.view.btn_load.clicked).connect(self._on_load_file)
+        cast(Any, self.view.btn_load_tif.clicked).connect(self._on_load_tif_file)
         cast(Any, self.view.cmb_palette.currentTextChanged).connect(self.update_views)
         
         cast(Any, self.view.sld_min.sliderReleased).connect(self.update_views)
@@ -26,6 +28,19 @@ class SSTController:
         cast(Any, self.view.btn_export_bmp.clicked).connect(self._on_export_bmp)
         
         self.view.lbl_canvas_map.hover_callback = self._on_mouse_hover
+        
+    def _on_load_tif_file(self) -> None:
+        dialog_res = QFileDialog.getOpenFileName(self.view, "Импорт TIF", "", "TIF Files (*.tif *.tiff)")
+        path = cast(str, dialog_res[0])
+        if not path: return
+
+        try:
+            bmp_stream, m_new, a_new = tif_importer.convert_tif_to_bmp_stream(path)
+            self.bmp_data = core.load_bmp_data(bmp_stream, m_coef=m_new, a_coef=a_new)
+            bmp_stream.close()
+            self._process_loaded_data()
+        except Exception as e:
+            QMessageBox.critical(self.view, "Ошибка импорта", f"Не удалось обработать TIF:\n{str(e)}")
 
     def _on_min_slider_moving(self) -> None:
         if self.view.sld_min.value() > self.view.sld_max.value():
@@ -53,32 +68,38 @@ class SSTController:
 
         try:
             self.bmp_data = core.load_bmp_data(path)
-            self.analysis_result = core.process_bmp_to_temperatures(self.bmp_data)
-
-            min_detected = self.analysis_result.stats.min_t
-            max_detected = self.analysis_result.stats.max_t
-
-            self.view.sld_min.blockSignals(True)
-            self.view.sld_max.blockSignals(True)
-
-            self.view.sld_min.setRange(int((min_detected - 1.0) * 10), int(max_detected * 10))
-            self.view.sld_max.setRange(int((min_detected - 1.0) * 10), int(max_detected * 10))
-            self.view.sld_min.setValue(int(min_detected * 10))
-            self.view.sld_max.setValue(int(max_detected * 10))
-
-            self.view.sld_min.blockSignals(False)
-            self.view.sld_max.blockSignals(False)
-
-            self.view.lbl_min_t.setText(f"Минимум: {min_detected:.2f} °C")
-            self.view.lbl_max_t.setText(f"Максимум: {max_detected:.2f} °C")
-            self.view.lbl_avg_t.setText(f"Средняя: {self.analysis_result.stats.avg_t:.2f} °C")
-
-            self.view.scroll_src.zoom_factor = 1.0
-            self.view.scroll_map.zoom_factor = 1.0
-
-            self.update_views()
+            self._process_loaded_data()
         except Exception as e:
             QMessageBox.critical(self.view, "Ошибка загрузки", f"Не удалось прочитать файл:\n{str(e)}")
+            
+    def _process_loaded_data(self) -> None:
+        if not self.bmp_data:
+            return
+            
+        self.analysis_result = core.process_bmp_to_temperatures(self.bmp_data)
+
+        min_detected = self.analysis_result.stats.min_t
+        max_detected = self.analysis_result.stats.max_t
+
+        self.view.sld_min.blockSignals(True)
+        self.view.sld_max.blockSignals(True)
+
+        self.view.sld_min.setRange(int((min_detected - 1.0) * 10), int(max_detected * 10))
+        self.view.sld_max.setRange(int((min_detected - 1.0) * 10), int(max_detected * 10))
+        self.view.sld_min.setValue(int(min_detected * 10))
+        self.view.sld_max.setValue(int(max_detected * 10))
+
+        self.view.sld_min.blockSignals(False)
+        self.view.sld_max.blockSignals(False)
+
+        self.view.lbl_min_t.setText(f"Минимум: {min_detected:.2f} °C")
+        self.view.lbl_max_t.setText(f"Максимум: {max_detected:.2f} °C")
+        self.view.lbl_avg_t.setText(f"Средняя: {self.analysis_result.stats.avg_t:.2f} °C")
+
+        self.view.scroll_src.zoom_factor = 1.0
+        self.view.scroll_map.zoom_factor = 1.0
+
+        self.update_views()
 
     def update_views(self) -> None:
         if not self.bmp_data or not self.analysis_result: return

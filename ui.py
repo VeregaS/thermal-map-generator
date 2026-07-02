@@ -134,6 +134,9 @@ class SSTView(QMainWindow):
         self.btn_load = QPushButton("Открыть файл BMP", control_panel)
         control_layout.addWidget(self.btn_load)
 
+        self.btn_load_tif = QPushButton("Импорт снимка (.TIF)", control_panel)
+        control_layout.addWidget(self.btn_load_tif)
+
         visual_group = QGroupBox("Настройки тепловой карты", control_panel)
         visual_layout = QVBoxLayout(visual_group)
         visual_layout.setSpacing(10)

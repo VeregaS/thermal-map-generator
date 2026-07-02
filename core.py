@@ -1,16 +1,22 @@
 import struct
 import math
 import logging
+import typing
 from typing import List
 from model import BmpData, TemperatureStats, AnalysisResult
 
-DEFAULT_M = 0.0003342
-DEFAULT_A = 0.1
 DEFAULT_K1 = 774.89
 DEFAULT_K2 = 1321.08
 
-def load_bmp_data(filepath: str) -> BmpData:
-    with open(filepath, 'rb') as f:
+def load_bmp_data(source: typing.Union[str, typing.BinaryIO], m_coef: float = 0.0003342, a_coef: float = 0.1) -> BmpData:
+    if isinstance(source, str):
+        f = open(source, 'rb')
+        should_close = True
+    else:
+        f = source
+        should_close = False
+        
+    try:
         file_header = f.read(14)
         if len(file_header) < 14 or file_header[0:2] != b'BM':
             raise ValueError("Файл не является валидным BMP")
@@ -37,7 +43,6 @@ def load_bmp_data(filepath: str) -> BmpData:
         
         if compression != 0:
             raise ValueError("Сжатые файлы BMP не поддерживаются")
-
         if bits_per_pixel != 8:
             raise ValueError("Поддерживаются только 8-битные BMP-файлы")
 
@@ -55,10 +60,14 @@ def load_bmp_data(filepath: str) -> BmpData:
             row_bytes = f.read(row_padded_width)
             matrix.append([int(b) for b in row_bytes[:width]])
             
-    return BmpData(width=width, height=height, raw_dn_matrix=matrix)
+    finally:
+        if should_close:
+            f.close()
+            
+    return BmpData(width=width, height=height, raw_dn_matrix=matrix, m_coef=m_coef, a_coef=a_coef)
 
 
-def dn_to_celsius(dn: int) -> float:
+def dn_to_celsius(dn: int, m_coef: float, a_coef: float) -> float:
     """
     Переводит цифровое значение яркости (DN) пикселя в температуру в градусах Цельсия.
 
@@ -73,7 +82,7 @@ def dn_to_celsius(dn: int) -> float:
         L = M * dn + A (спектральная энергетическая яркость)
         T = K2 / ln(K1 / L + 1) - 273.15 (перевод в градусы Цельсия)
     """
-    l_val: float = DEFAULT_M * dn + DEFAULT_A
+    l_val: float = m_coef * dn + a_coef
     safe_l: float = l_val if l_val > 0 else 0.0001
     try:
         t_kelvin: float = DEFAULT_K2 / math.log((DEFAULT_K1 / safe_l) + 1.0)
@@ -133,7 +142,7 @@ def calculate_stats(matrix: List[List[float]], bmp_data: BmpData) -> Temperature
 
 def process_bmp_to_temperatures(bmp_data: BmpData) -> AnalysisResult:
     temp_matrix: List[List[float]] = [
-        [dn_to_celsius(dn) for dn in row]
+        [dn_to_celsius(dn, bmp_data.m_coef, bmp_data.a_coef) for dn in row]
         for row in bmp_data.raw_dn_matrix
     ]
     stats: TemperatureStats = calculate_stats(temp_matrix, bmp_data)
@@ -163,7 +172,7 @@ def generate_fast_rgb_buffer(analysis_result: AnalysisResult, bmp_data: BmpData,
     inv_range = 1.0 / range_diff if range_diff != 0 else 1.0
 
     for dn in range(256):
-        val = dn_to_celsius(dn) 
+        val = dn_to_celsius(dn, bmp_data.m_coef, bmp_data.a_coef) 
         idx = dn * 4
         
         if dn == 0 or math.isnan(val) or val < min_v or val > max_v:
@@ -173,15 +182,14 @@ def generate_fast_rgb_buffer(analysis_result: AnalysisResult, bmp_data: BmpData,
         norm = max(0.0, min(1.0, (val - min_v) * inv_range))
         r, g, b = _get_color_from_palette(norm, palette_type)
         
-        lut[idx] = b          # B
-        lut[idx+1] = g        # G
-        lut[idx+2] = r        # R
-        lut[idx+3] = 255      # A
+        lut[idx] = b
+        lut[idx+1] = g
+        lut[idx+2] = r
+        lut[idx+3] = 255
 
     buffer = bytearray(w * h * 4)
     buffer[:] = b''.join(lut[dn*4 : dn*4+4] for dn in dn_flat)
     return bytes(buffer)
-
 
 def save_analysis_to_bmp(filepath: str, analysis_result: AnalysisResult, bmp_data: BmpData, min_v: float, max_v: float, palette_type: str) -> None:
     """
@@ -212,7 +220,7 @@ def save_analysis_to_bmp(filepath: str, analysis_result: AnalysisResult, bmp_dat
     inv_range = 1.0 / range_diff if range_diff != 0 else 1.0
 
     for dn in range(256):
-        val = dn_to_celsius(dn)
+        val = dn_to_celsius(dn, bmp_data.m_coef, bmp_data.a_coef)
         idx = dn * 3
         if dn == 0 or math.isnan(val) or val < min_v or val > max_v:
             lut_bmp[idx:idx+3] = b'\x00\x00\x00'

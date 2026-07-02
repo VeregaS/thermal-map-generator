@@ -5,6 +5,8 @@ class BmpData(NamedTuple):
     width: int
     height: int
     raw_dn_matrix: List[List[int]]
+    m_coef: float = 0.0003342
+    a_coef: float = 0.1
 
 class TemperatureStats(NamedTuple):
     """Структура для хранения агрегированных статистических показателей."""
