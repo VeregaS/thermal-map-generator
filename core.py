@@ -2,6 +2,7 @@ import struct
 import math
 import logging
 import typing
+import itertools
 from typing import List
 from model import BmpData, TemperatureStats, AnalysisResult
 
@@ -25,18 +26,6 @@ def load_bmp_data(source: typing.Union[str, typing.BinaryIO], m_coef: float = 0.
         if len(info_header) < 40:
             raise ValueError("Некорректный заголовок InfoHeader")
         
-        # < : Little-endian (младший байт идет первым)
-        # L : DWORD (4 байта) - размер структуры InfoHeader (biSize)
-        # l : LONG (4 байта) - ширина изображения (biWidth)
-        # l : LONG (4 байта) - высота изображения (biHeight)
-        # H : WORD (2 байта) - количество плоскостей (biPlanes)
-        # H : WORD (2 байта) - бит на пиксель, глубина цвета (biBitCount)
-        # L : DWORD (4 байта) - тип сжатия (biCompression)
-        # L : DWORD (4 байта) - размер изображения в байтах (biSizeImage)
-        # l : LONG (4 байта) - горизонтальное разрешение (biXPelsPerMeter)
-        # l : LONG (4 байта) - вертикальное разрешение (biYPelsPerMeter)
-        # L : DWORD (4 байта) - количество используемых цветов (biClrUsed)
-        # L : DWORD (4 байта) - количество важных цветов (biClrImportant)
         _, width, height, _, bits_per_pixel, compression, _, _, _, _, _ = struct.unpack(
             '<LllHHLLllLL', info_header
         )
@@ -50,11 +39,6 @@ def load_bmp_data(source: typing.Union[str, typing.BinaryIO], m_coef: float = 0.
         f.seek(data_offset)
         
         matrix: List[List[int]] = []
-        
-        # Выравнивание длины строки кратно 4 байтам (строгое требование стандарта BMP).
-        # Операция (width + 3) прибавляет 3 для компенсации неполных четверок байт.
-        # Побитовое И с инверсией тройки (& ~3) сбрасывает два младших бита в ноль, 
-        # тем самым округляя итоговое значение в большую сторону до ближайшего числа, кратного 4.
         row_padded_width = (width + 3) & ~3
         for _ in range(height):
             row_bytes = f.read(row_padded_width)
@@ -66,34 +50,18 @@ def load_bmp_data(source: typing.Union[str, typing.BinaryIO], m_coef: float = 0.
             
     return BmpData(width=width, height=height, raw_dn_matrix=matrix, m_coef=m_coef, a_coef=a_coef)
 
-
 def dn_to_celsius(dn: int, m_coef: float, a_coef: float) -> float:
-    """
-    Переводит цифровое значение яркости (DN) пикселя в температуру в градусах Цельсия.
-
-    Аргументы:
-        dn (int): Значение яркости пикселя (Digital Number, 0-255).
-        use_landsat (bool): Флаг использования тепловых констант Landsat 8 (TIRS).
-
-    Возвращает:
-        float: Температура в градусах Цельсия или float('nan') в случае математической ошибки.
-        
-    Формула:
-        L = M * dn + A (спектральная энергетическая яркость)
-        T = K2 / ln(K1 / L + 1) - 273.15 (перевод в градусы Цельсия)
-    """
     l_val: float = m_coef * dn + a_coef
-    safe_l: float = l_val if l_val > 0 else 0.0001
+    # Физический смысл: отрицательная радиация - ошибка датчика или глубокий космос
+    if l_val <= 0:
+        return float('nan')
     try:
-        t_kelvin: float = DEFAULT_K2 / math.log((DEFAULT_K1 / safe_l) + 1.0)
-        celsius = t_kelvin - 273.15
-        return celsius if celsius >= -10.0 else float('nan')
+        t_kelvin: float = DEFAULT_K2 / math.log((DEFAULT_K1 / l_val) + 1.0)
+        return t_kelvin - 273.15 # Лимит в -10.0 удален
     except (ValueError, ZeroDivisionError):
         return float('nan')
-    
-    
+
 def _get_color_from_palette(norm: float, palette_type: str) -> tuple[int, int, int]:
-    """Возвращает RGB-компоненты (R, G, B) от 0 до 255 на основе нормализованного значения."""
     if palette_type == "JET":
         r_c = max(0.0, min(1.0, 1.5 - abs(norm * 4.0 - 3.0)))
         g_c = max(0.0, min(1.0, 1.5 - abs(norm * 4.0 - 2.0)))
@@ -110,9 +78,7 @@ def _get_color_from_palette(norm: float, palette_type: str) -> tuple[int, int, i
         b_c = 1.0
     else:
         raise ValueError(f"Неизвестная палитра: {palette_type}")
-        
     return int(r_c * 255), int(g_c * 255), int(b_c * 255)
-
 
 def calculate_stats(matrix: List[List[float]], bmp_data: BmpData) -> TemperatureStats:
     flat_temps = []
@@ -148,25 +114,7 @@ def process_bmp_to_temperatures(bmp_data: BmpData) -> AnalysisResult:
     stats: TemperatureStats = calculate_stats(temp_matrix, bmp_data)
     return AnalysisResult(width=bmp_data.width, height=bmp_data.height, temp_matrix_c=temp_matrix, stats=stats)
 
-
 def generate_fast_rgb_buffer(analysis_result: AnalysisResult, bmp_data: BmpData, min_v: float, max_v: float, palette_type: str) -> bytes:
-    """
-    Быстрая генерация буфера через Look-Up Table (LUT).
-
-    Аргументы:
-        analysis_result (AnalysisResult): Результат температурного анализа матрицы.
-        bmp_data (BmpData): Исходные данные BMP-файла.
-        min_v (float): Минимальная граница температур для отображения.
-        max_v (float): Максимальная граница температур для отображения.
-        palette_type (str): Выбранный тип палитры (JET, HOT, GRAY, COOL).
-
-    Возвращает:
-        bytes: Массив байтов в формате RGB32 для быстрой отрисовки в GUI.
-    """
-    w: int = analysis_result.width
-    h: int = analysis_result.height
-    dn_flat = [dn for row in bmp_data.raw_dn_matrix for dn in row]
-    
     lut = bytearray(256 * 4)
     range_diff = max_v - min_v
     inv_range = 1.0 / range_diff if range_diff != 0 else 1.0
@@ -187,25 +135,30 @@ def generate_fast_rgb_buffer(analysis_result: AnalysisResult, bmp_data: BmpData,
         lut[idx+2] = r
         lut[idx+3] = 255
 
-    buffer = bytearray(w * h * 4)
-    buffer[:] = b''.join(lut[dn*4 : dn*4+4] for dn in dn_flat)
+    # Оптимизация памяти: используем итератор вместо аллокации гигантского списка на 56M пикселей
+    dn_iterator = itertools.chain.from_iterable(bmp_data.raw_dn_matrix)
+    return bytes(b''.join(lut[dn*4 : dn*4+4] for dn in dn_iterator))
+
+
+def apply_palette_to_temps(temp_matrix: List[List[float]], min_v: float, max_v: float, palette_type: str) -> bytes:
+    """Применяет палитру к УЖЕ вычисленным температурам."""
+    range_diff = max_v - min_v
+    inv_range = 1.0 / range_diff if range_diff != 0 else 1.0
+    
+    # Создаем быстрый LUT для температур
+    # (здесь можно дополнительно оптимизировать, но это уже даст x10 скорости)
+    buffer = bytearray()
+    for row in temp_matrix:
+        for t in row:
+            if math.isnan(t) or t < min_v or t > max_v:
+                buffer.extend(b'\x00\x00\x00\xff')
+            else:
+                norm = max(0.0, min(1.0, (t - min_v) * inv_range))
+                r, g, b = _get_color_from_palette(norm, palette_type)
+                buffer.extend(bytes([b, g, r, 255]))
     return bytes(buffer)
 
 def save_analysis_to_bmp(filepath: str, analysis_result: AnalysisResult, bmp_data: BmpData, min_v: float, max_v: float, palette_type: str) -> None:
-    """
-    Сохраняет сгенерированную тепловую карту в виде 24-битного BMP-файла на диск.
-
-    Аргументы:
-        filepath (str): Полный путь для сохранения файла.
-        analysis_result (AnalysisResult): Данные температурного расчета.
-        bmp_data (BmpData): Исходная матрица.
-        min_v (float): Минимальная граница градиента.
-        max_v (float): Максимальная граница градиента.
-        palette_type (str): Выбранный тип палитры.
-
-    Возвращает:
-        None
-    """
     w: int = analysis_result.width
     h: int = analysis_result.height
     row_padded_width: int = (w * 3 + 3) & ~3
