@@ -95,10 +95,13 @@ def _get_color_from_palette(norm: float, palette_type: str) -> tuple[int, int, i
         b_c = max(0.0, min(1.0, norm * 3.0 - 2.0))
     elif palette_type == "GRAY":
         r_c = g_c = b_c = norm
-    else:  # COOL
+    elif palette_type == "COOL":
         r_c = norm
         g_c = 1.0 - norm
         b_c = 1.0
+    else:
+        raise ValueError(f"Неизвестная палитра: {palette_type}")
+        
     return int(r_c * 255), int(g_c * 255), int(b_c * 255)
 
 

@@ -1,10 +1,17 @@
 import sys
+import logging
 from PyQt6.QtWidgets import QApplication
 import ui
 import controller
 
 def main() -> None:
     """Инициализирует MVC-компоненты приложения и запускает цикл PyQt6."""
+    logging.basicConfig(
+        level=logging.WARNING,
+        format="[%(asctime)s] %(levelname)s: %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S"
+    )
+    
     app = QApplication(sys.argv)
     
     view = ui.SSTView()
