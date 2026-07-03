@@ -66,8 +66,9 @@ class RenderWorker(QThread):
                 self.analysis_result.stats.max_t, 
                 "GRAY"
             )
-            map_buf = core.apply_palette_to_temps(
-                self.analysis_result.temperatures, 
+            map_buf = core.generate_fast_rgb_buffer(
+                self.analysis_result, 
+                self.bmp_data, 
                 self.min_t, 
                 self.max_t, 
                 self.palette

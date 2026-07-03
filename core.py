@@ -154,9 +154,15 @@ def process_bmp_to_temperatures(bmp_data: BmpData) -> AnalysisResult:
     Returns:
         Объект AnalysisResult с результатами вычислений.
     """
-    temperatures = array.array('f', (dn_to_celsius(dn, bmp_data.m_coef, bmp_data.a_coef) for dn in bmp_data.raw_data))
+    temp_lut = [dn_to_celsius(dn, bmp_data.m_coef, bmp_data.a_coef) for dn in range(256)]
+    temperatures = array.array('f', (temp_lut[dn] for dn in bmp_data.raw_data))
     stats = calculate_stats(temperatures, bmp_data.raw_data)
-    return AnalysisResult(width=bmp_data.width, height=bmp_data.height, temperatures=temperatures, stats=stats)
+    return AnalysisResult(
+        width=bmp_data.width, 
+        height=bmp_data.height, 
+        temperatures=temperatures, 
+        stats=stats
+    )
 
 def generate_fast_rgb_buffer(analysis_result: AnalysisResult, bmp_data: BmpData, min_v: float, max_v: float, palette_type: str) -> bytes:
     """
@@ -174,34 +180,6 @@ def generate_fast_rgb_buffer(analysis_result: AnalysisResult, bmp_data: BmpData,
     """
     lut = _build_color_lut(bmp_data, min_v, max_v, palette_type, channels=4)
     return bytes(b''.join(lut[dn*4 : dn*4+4] for dn in bmp_data.raw_data))
-
-def apply_palette_to_temps(temperatures: array.array, min_v: float, max_v: float, palette_type: str) -> bytes:
-    """
-    Применяет цветовую палитру напрямую к массиву температур с плавающей точкой.
-
-    Args:
-        temperatures: Массив температур.
-        min_v: Нижняя граница нормализации.
-        max_v: Верхняя граница нормализации.
-        palette_type: Идентификатор цветовой схемы.
-
-    Returns:
-        Байтовый массив пикселей (BGRA).
-    """
-    range_diff = max_v - min_v
-    inv_range = 1.0 / range_diff if range_diff != 0 else 1.0
-    
-    buffer = bytearray(len(temperatures) * 4)
-    idx = 0
-    for t in temperatures:
-        if math.isnan(t) or t < min_v or t > max_v:
-            buffer[idx:idx+4] = b'\x00\x00\x00\xff'
-        else:
-            norm = max(0.0, min(1.0, (t - min_v) * inv_range))
-            r, g, b = _get_color_from_palette(norm, palette_type)
-            buffer[idx:idx+4] = bytes((b, g, r, 255))
-        idx += 4
-    return bytes(buffer)
 
 def _generate_bmp_headers(width: int, height: int, pixel_data_size: int) -> bytes:
     """
