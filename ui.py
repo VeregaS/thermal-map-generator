@@ -2,6 +2,8 @@ from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QPushButton, QVBoxLayout, QHBoxLayout,
     QLabel, QComboBox, QTabWidget, QGridLayout, QFrame
 )
+from model import TemperatureStats
+from PyQt6.QtGui import QImage, QPixmap
 from PyQt6.QtCore import Qt
 from ui_constants import PROFESSIONAL_STYLE
 from ui_widgets import ZoomableScrollArea, HoverLabel, SafeSlider
@@ -231,3 +233,24 @@ class SSTView(QMainWindow):
         """
         self.lbl_sld_min_val.setText(f"Мин. темп.: {min_t:.1f} °C")
         self.lbl_sld_max_val.setText(f"Макс. темп.: {max_t:.1f} °C")
+        
+    def display_statistics(self, stats: TemperatureStats) -> None:
+        """Обновляет UI-элементы статистики на основе данных модели."""
+        self.lbl_min_t.setText(f"{stats.min_t:.2f} °C")
+        self.lbl_max_t.setText(f"{stats.max_t:.2f} °C")
+        self.lbl_delta_t.setText(f"{(stats.max_t - stats.min_t):.2f} °C")
+        self.lbl_avg_t.setText(f"{stats.avg_t:.2f} °C")
+        self.lbl_med_t.setText(f"{stats.median_t:.2f} °C")
+        self.lbl_std_t.setText(f"±{stats.std_dev:.2f} °C")
+        
+        formatted_px = f"{stats.valid_pixels:,}".replace(',', ' ')
+        self.lbl_px_count.setText(f"{formatted_px} px")
+
+    def display_images(self, src_buf: bytes, map_buf: bytes, w: int, h: int) -> None:
+        """Обновляет холсты изображений."""
+        bytes_per_line = w * 4
+        img_src = QImage(src_buf, w, h, bytes_per_line, QImage.Format.Format_RGB32).mirrored(False, True).copy()
+        img_map = QImage(map_buf, w, h, bytes_per_line, QImage.Format.Format_RGB32).mirrored(False, True).copy()
+        
+        self.scroll_src.set_pixmap(QPixmap.fromImage(img_src))
+        self.scroll_map.set_pixmap(QPixmap.fromImage(img_map))

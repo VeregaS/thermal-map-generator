@@ -1,8 +1,9 @@
 from typing import Any, cast
 from PyQt6.QtWidgets import QFileDialog, QMessageBox, QProgressDialog
-from PyQt6.QtGui import QImage, QPixmap, QMouseEvent
+from PyQt6.QtGui import QMouseEvent
 from PyQt6.QtCore import Qt, QTimer, QPoint
 import ui
+import core
 from model import ThermalSessionModel, BmpData, AnalysisResult
 from workers import LoadWorker, RenderWorker, ExportWorker
 
@@ -121,18 +122,7 @@ class SSTController:
         self.view.sld_min.blockSignals(False)
         self.view.sld_max.blockSignals(False)
 
-        stats = analysis_result.stats
-        
-        self.view.lbl_min_t.setText(f"{stats.min_t:.2f} °C")
-        self.view.lbl_max_t.setText(f"{stats.max_t:.2f} °C")
-        self.view.lbl_delta_t.setText(f"{(stats.max_t - stats.min_t):.2f} °C")
-        
-        self.view.lbl_avg_t.setText(f"{stats.avg_t:.2f} °C")
-        self.view.lbl_med_t.setText(f"{stats.median_t:.2f} °C")
-        self.view.lbl_std_t.setText(f"±{stats.std_dev:.2f} °C")
-        
-        formatted_px = f"{stats.valid_pixels:,}".replace(',', ' ')
-        self.view.lbl_px_count.setText(f"{formatted_px} px")
+        self.view.display_statistics(analysis_result.stats)
 
         self._apply_global_zoom(100)
         self.update_views()
@@ -181,13 +171,7 @@ class SSTController:
             h: Высота изображения.
         """
         self._close_progress()
-        bytes_per_line = w * 4
-        
-        img_src = QImage(src_buf, w, h, bytes_per_line, QImage.Format.Format_RGB32).mirrored(False, True).copy()
-        img_map = QImage(map_buf, w, h, bytes_per_line, QImage.Format.Format_RGB32).mirrored(False, True).copy()
-        
-        self.view.scroll_src.set_pixmap(QPixmap.fromImage(img_src))
-        self.view.scroll_map.set_pixmap(QPixmap.fromImage(img_map))
+        self.view.display_images(src_buf, map_buf, w, h)
 
     def _on_render_error(self, err_msg: str) -> None:
         """
@@ -199,22 +183,21 @@ class SSTController:
         self._close_progress()
         QMessageBox.critical(self.view, "Ошибка отрисовки", f"Сбой при генерации превью:\n{err_msg}")
 
-    def _on_min_slider_moving(self) -> None:
-        """Обрабатывает перемещение ползунка минимальной температуры."""
-        if self.view.sld_min.value() > self.view.sld_max.value():
-            self.view.sld_max.blockSignals(True)
-            self.view.sld_max.setValue(self.view.sld_min.value())
-            self.view.sld_max.blockSignals(False)
-        self._update_model_from_sliders()
-        self.render_timer.start(200)
+    def _on_min_slider_moving(self, value: int) -> None:
+        if value > self.view.sld_max.value():
+            self.view.sld_max.setValue(value) # setValue сам вызывает сигнал, но мы обновим модель один раз
+        self._sync_model_and_render()
 
-    def _on_max_slider_moving(self) -> None:
-        """Обрабатывает перемещение ползунка максимальной температуры."""
-        if self.view.sld_max.value() < self.view.sld_min.value():
-            self.view.sld_min.blockSignals(True)
-            self.view.sld_min.setValue(self.view.sld_max.value())
-            self.view.sld_min.blockSignals(False)
-        self._update_model_from_sliders()
+    def _on_max_slider_moving(self, value: int) -> None:
+        if value < self.view.sld_min.value():
+            self.view.sld_min.setValue(value)
+        self._sync_model_and_render()
+
+    def _sync_model_and_render(self) -> None:
+        """Единая точка синхронизации модели с UI и перезапуска рендера."""
+        self.model.min_t = float(self.view.sld_min.value()) / 10.0
+        self.model.max_t = float(self.view.sld_max.value()) / 10.0
+        self.view.update_slider_text(self.model.min_t, self.model.max_t)
         self.render_timer.start(200)
 
     def _update_model_from_sliders(self) -> None:
@@ -378,7 +361,11 @@ class SSTController:
         dialog_res = QFileDialog.getSaveFileName(self.view, "Сохранить отчет", "", "Text Files (*.txt)")
         path = cast(str, dialog_res[0])
         if path:
-            self._write_txt_report(path)
+            try:
+                core.save_txt_report(path, self.model.analysis_result)
+                QMessageBox.information(self.view, "Успех", f"Отчет сохранен:\n{path}")
+            except Exception as e:
+                QMessageBox.critical(self.view, "Ошибка", f"Сбой при сохранении:\n{str(e)}")
 
     def _on_export_bmp(self) -> None:
         """Вызывает диалог сохранения и инициирует асинхронный экспорт BMP карты."""

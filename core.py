@@ -253,3 +253,24 @@ def save_analysis_to_bmp(filepath: str, analysis_result: AnalysisResult, bmp_dat
         
     with open(filepath, 'wb') as f:
         f.write(headers + pixel_bytes)
+        
+        
+def save_txt_report(filepath: str, analysis_result: AnalysisResult) -> None:
+    """Формирует и сохраняет текстовый отчет со статистикой."""
+    res = analysis_result
+    with open(filepath, "w", encoding="utf-8") as f:
+        f.write("=========================================\n")
+        f.write("ОТЧЕТ ПО ТЕМПЕРАТУРНОМУ КАРТИРОВАНИЮ ССТ\n")
+        f.write("=========================================\n")
+        f.write(f"Разрешение матрицы:     {res.width}x{res.height} px\n")
+        f.write(f"Кол-во точек данных:    {res.stats.valid_pixels}\n")
+        f.write("-----------------------------------------\n")
+        f.write("ТЕМПЕРАТУРНЫЕ ХАРАКТЕРИСТИКИ:\n")
+        f.write(f"Минимальная темп.:      {res.stats.min_t:.2f} °C\n")
+        f.write(f"Максимальная темп.:     {res.stats.max_t:.2f} °C\n")
+        f.write(f"Размах температур (ΔT): {res.stats.max_t - res.stats.min_t:.2f} °C\n")
+        f.write("-----------------------------------------\n")
+        f.write("РАСПРЕДЕЛЕНИЕ:\n")
+        f.write(f"Среднее значение:       {res.stats.avg_t:.2f} °C\n")
+        f.write(f"Медианное значение:     {res.stats.median_t:.2f} °C\n")
+        f.write(f"Стандартное отклонение: ±{res.stats.std_dev:.2f} °C\n")
