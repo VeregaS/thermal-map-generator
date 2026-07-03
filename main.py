@@ -3,8 +3,8 @@ import logging
 from types import TracebackType
 from typing import Type
 from PyQt6.QtWidgets import QApplication
-import ui
-import controller
+import view.ui as ui
+from controller import controller
 
 def _setup_logging() -> None:
     """Настраивает базовые параметры системного логирования."""

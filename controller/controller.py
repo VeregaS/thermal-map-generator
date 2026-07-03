@@ -2,10 +2,10 @@ from typing import Any, cast
 from PyQt6.QtWidgets import QFileDialog, QMessageBox, QProgressDialog
 from PyQt6.QtGui import QMouseEvent
 from PyQt6.QtCore import Qt, QTimer, QPoint
-import ui
-import core
-from model import ThermalSessionModel, BmpData, AnalysisResult
-from workers import LoadWorker, RenderWorker, ExportWorker
+from core import processing
+import view.ui as ui
+from model.data_types import ThermalSessionModel, BmpData, AnalysisResult
+from controller.workers import LoadWorker, RenderWorker, ExportWorker
 
 class SSTController:
     """Контроллер приложения для обработки логики взаимодействия между интерфейсом и моделью данных."""
@@ -362,7 +362,7 @@ class SSTController:
         path = cast(str, dialog_res[0])
         if path:
             try:
-                core.save_txt_report(path, self.model.analysis_result)
+                processing.save_txt_report(path, self.model.analysis_result)
                 QMessageBox.information(self.view, "Успех", f"Отчет сохранен:\n{path}")
             except Exception as e:
                 QMessageBox.critical(self.view, "Ошибка", f"Сбой при сохранении:\n{str(e)}")

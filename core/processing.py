@@ -3,7 +3,7 @@ import math
 import array
 import logging
 from typing import Tuple
-from model import BmpData, TemperatureStats, AnalysisResult
+from model.data_types import BmpData, TemperatureStats, AnalysisResult
 
 DEFAULT_K1: float = 774.89
 DEFAULT_K2: float = 1321.08

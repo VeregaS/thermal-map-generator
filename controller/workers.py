@@ -1,7 +1,7 @@
 from PyQt6.QtCore import QThread, pyqtSignal
-import core
-import tif_importer
-from model import BmpData, ThermalSessionModel
+import core.importer as importer
+import core.processing as core
+from model.data_types import BmpData, ThermalSessionModel
 
 class LoadWorker(QThread):
     """Асинхронный поток для загрузки и первичного анализа TIF-изображения."""
@@ -22,7 +22,7 @@ class LoadWorker(QThread):
     def run(self) -> None:
         """Запускает процесс чтения матрицы и расчета температур."""
         try:
-            width, height, raw_data, m_new, a_new = tif_importer.load_tif_data(self.path)
+            width, height, raw_data, m_new, a_new = importer.load_tif_data(self.path)
             bmp_data = BmpData(width=width, height=height, raw_data=raw_data, m_coef=m_new, a_coef=a_new)
             
             analysis_result = core.process_bmp_to_temperatures(bmp_data)
@@ -67,12 +67,12 @@ class RenderWorker(QThread):
                 "GRAY"
             )
             map_buf = core.generate_fast_rgb_buffer(
-                self.analysis_result, 
-                self.bmp_data, 
-                self.min_t, 
-                self.max_t, 
-                self.palette
-            )
+                    self.analysis_result, 
+                    self.bmp_data, 
+                    self.min_t, 
+                    self.max_t, 
+                    self.palette
+                )
 
             self.finished_signal.emit(src_buf, map_buf, w, h)
         except Exception as e:

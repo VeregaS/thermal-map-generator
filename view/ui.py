@@ -2,11 +2,11 @@ from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QPushButton, QVBoxLayout, QHBoxLayout,
     QLabel, QComboBox, QTabWidget, QGridLayout, QFrame
 )
-from model import TemperatureStats
+from model.data_types import TemperatureStats
 from PyQt6.QtGui import QImage, QPixmap
 from PyQt6.QtCore import Qt
-from ui_constants import PROFESSIONAL_STYLE
-from ui_widgets import ZoomableScrollArea, HoverLabel, SafeSlider
+from view.ui_constants import PROFESSIONAL_STYLE
+from view.ui_widgets import ZoomableScrollArea, HoverLabel, SafeSlider
 
 class SSTView(QMainWindow):
     """

@@ -2,7 +2,7 @@ from typing import Optional, Callable
 from PyQt6.QtWidgets import QScrollArea, QWidget, QLabel, QSlider, QStyleOptionSlider, QStyle
 from PyQt6.QtCore import Qt, QPoint, pyqtSignal, QEvent
 from PyQt6.QtGui import QPixmap, QMouseEvent, QWheelEvent
-from ui_constants import WIDTH_PREVIEW, HEIGHT_PREVIEW
+from view.ui_constants import WIDTH_PREVIEW, HEIGHT_PREVIEW
 
 class ZoomableScrollArea(QScrollArea):
     """
